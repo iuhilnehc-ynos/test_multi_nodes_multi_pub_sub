@@ -23,11 +23,12 @@ public:
   {
     std::string topic_basename = node_name;
     topic_basename.replace(4, 5, "");
+    std::string topic_name = topic_basename + "_1";
 
     auto dummy = [](std_msgs::msg::String::ConstSharedPtr msg) {(void) msg;};
 
-    for (uint32_t i = 0; i < sub_num; i++) {
-      std::string topic_name = topic_basename + "_" + std::to_string(i);
+    RCLCPP_INFO(this->get_logger(), "Connect to topic %s", topic_name.c_str());
+    for (uint32_t i = 1; i <= sub_num; i++) {
       auto sub = create_subscription<std_msgs::msg::String>(topic_name, 10, dummy);
       subs_.emplace_back(sub);
     }
@@ -91,7 +92,7 @@ int main(int argc, char * argv[])
 
   rclcpp::executors::SingleThreadedExecutor exe;
   std::vector<std::shared_ptr<NodeSub>> nodes;
-  for (uint32_t i = 0; i < node_num; i++) {
+  for (uint32_t i = 1; i <= node_num; i++) {
     std::string node_name = "node_sub_" + std::to_string(i);
     auto node = std::make_shared<NodeSub>(node_name, sub_num);
     nodes.emplace_back(node);

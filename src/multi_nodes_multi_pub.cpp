@@ -19,30 +19,17 @@ public:
     std::string topic_basename = node_name;
     topic_basename.replace(4, 5, "");
 
-    for (uint32_t i = 0; i < pub_num; i++) {
+    for (uint32_t i = 1; i <= pub_num; i++) {
       std::string topic_name = topic_basename + "_" + std::to_string(i);
       auto pub = create_publisher<std_msgs::msg::String>(topic_name, 10);
       pubs_.emplace_back(pub);
     }
 
     RCLCPP_INFO(this->get_logger(), "Create %u publishers --- Done !", pub_num);
-
-    auto callback = [this](){
-      for (auto & pub: pubs_) {
-        if (pub->get_subscription_count() != 1) {
-          return;
-        }
-      }
-      RCLCPP_INFO(this->get_logger(), "%s: each publisher has one subscription !", this->get_name());
-      this->timer_->cancel();
-    };
-
-    timer_ = create_wall_timer(std::chrono::milliseconds(500), callback);
   }
 
 private:
   std::vector<rclcpp::Publisher<std_msgs::msg::String>::SharedPtr> pubs_;
-  rclcpp::TimerBase::SharedPtr timer_;
 };
 
 void usage(std::string prog_name){
@@ -77,7 +64,7 @@ int main(int argc, char * argv[])
 
   rclcpp::executors::SingleThreadedExecutor exe;
   std::vector<std::shared_ptr<NodePub>> nodes;
-  for (uint32_t i = 0; i < node_num; i++) {
+  for (uint32_t i = 1; i <= node_num; i++) {
     std::string node_name = "node_pub_" + std::to_string(i);
     auto node = std::make_shared<NodePub>(node_name, pub_num);
     nodes.emplace_back(node);
