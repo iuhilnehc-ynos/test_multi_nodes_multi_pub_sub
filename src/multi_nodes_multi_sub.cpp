@@ -19,30 +19,54 @@ std::atomic_uint32_t current_number = 0;
 class NodeSub : public rclcpp::Node
 {
 public:
-  explicit NodeSub(const std::string & node_name, uint32_t sub_num) : rclcpp::Node(node_name)
+  explicit NodeSub(
+    const std::string & node_name_prefix,
+    uint32_t node_index,
+    const std::string & topic_name_prefix,
+    uint32_t subscriber_count_per_node,
+    uint32_t topic_count_per_node,
+    bool ignore_node_index,
+    bool ignore_topic_index)
+  : rclcpp::Node(node_name_prefix+std::to_string(node_index))
   {
-    std::string topic_basename = node_name;
-    topic_basename.replace(4, 5, "");
+    auto dummy = [](std_msgs::msg::String::ConstSharedPtr) {};
 
-    auto dummy = [](std_msgs::msg::String::ConstSharedPtr msg) {(void) msg;};
+    uint32_t topic_count_per_group = 0;
+    if (topic_count_per_node != 0) {
+      topic_count_per_group = (subscriber_count_per_node + (topic_count_per_node - 1)) / topic_count_per_node;
+      if (topic_count_per_node > subscriber_count_per_node) {
+        RCLCPP_WARN(this->get_logger(), "topic count per node [%d] is greater than subscriber count per node [%d], some topic will be ignored",
+          topic_count_per_node, subscriber_count_per_node);
+      }
+    }
 
-    for (uint32_t i = 0; i < sub_num; i++) {
-      std::string topic_name = topic_basename + "_" + std::to_string(i);
+    for (uint32_t i = 0; i < subscriber_count_per_node; i++) {
+      std::string topic_name;
+      std::string node_index_str = ignore_node_index ? "" : "_" + std::to_string(node_index);
+      uint32_t topic_index;
+      if (topic_count_per_group != 0) {
+        topic_index = i / topic_count_per_group;
+      } else {
+        topic_index = i;
+      }
+      std::string topic_index_str = ignore_topic_index ? "" : "_" + std::to_string(topic_index);
+      topic_name = topic_name_prefix + node_index_str + topic_index_str;
+
       auto sub = create_subscription<std_msgs::msg::String>(topic_name, 10, dummy);
       subs_.emplace_back(sub);
     }
 
-    RCLCPP_INFO(this->get_logger(), "Create %u subscriptions --- Done !", sub_num);
+    RCLCPP_INFO(this->get_logger(), "Create %u subscriptions --- Done !", subscriber_count_per_node);
 
-    auto callback = [this](){
+    auto callback = [this, subscriber_count_per_node](){
       for (auto & sub: subs_) {
-        if (sub->get_publisher_count() != 1) {
+        if (sub->get_publisher_count() < 1) {
           return;
         }
       }
-      RCLCPP_INFO(this->get_logger(), "%s: each subscription has one publisher!", this->get_name());
+      RCLCPP_INFO(this->get_logger(), "%s: each subscription has one publisher at least!", this->get_name());
       this->timer_->cancel();
-      current_number.fetch_add(10, std::memory_order_relaxed);
+      current_number.fetch_add(subscriber_count_per_node, std::memory_order_relaxed);
       if (current_number == target_number) {
         RCLCPP_INFO(this->get_logger(), "+++ All subscriptions connect publishers ! +++");
       }
@@ -57,7 +81,8 @@ private:
 };
 
 void usage(std::string prog_name){
-  std::cout << "Usage: " << prog_name << " -n Node_Num -s Sub_Num_In_One_Node" << std::endl;
+  std::cout << "Usage: " << prog_name
+    << " -n node_count -s subscriber_count_per_node [-t topic_count_per_node] [-o topic_name_prefix] [-c ignore_node_index]" << std::endl;
 }
 
 
@@ -68,32 +93,63 @@ int main(int argc, char * argv[])
   rclcpp::init(argc, argv);
 
   char * cli_option = nullptr;
-  uint32_t node_num = 0;
+  uint32_t node_count = 0;
   cli_option = rcutils_cli_get_option(argv, argv + argc, "-n");
   if (nullptr != cli_option) {
-    node_num = stoi(std::string(cli_option));
+    node_count = stoi(std::string(cli_option));
   } else {
     usage(argv[0]);
     return EXIT_FAILURE;
   }
 
-  uint32_t sub_num = 0;
+  uint32_t subscriber_count_per_node = 0;
   cli_option = rcutils_cli_get_option(argv, argv + argc, "-s");
   if (nullptr != cli_option) {
-    sub_num = stoi(std::string(cli_option));
+    subscriber_count_per_node = stoi(std::string(cli_option));
   } else {
     usage(argv[0]);
     return EXIT_FAILURE;
+  }
+
+  uint32_t topic_count_per_node = 0;
+  cli_option = rcutils_cli_get_option(argv, argv + argc, "-t");
+  if (nullptr != cli_option) {
+    topic_count_per_node = stoi(std::string(cli_option));
+  }
+
+  std::string topic_name_prefix = "topic_name";
+  cli_option = rcutils_cli_get_option(argv, argv + argc, "-o");
+  if (nullptr != cli_option) {
+    topic_name_prefix = cli_option;
+  }
+
+  std::string node_name_prefix = "node_sub_";
+  cli_option = rcutils_cli_get_option(argv, argv + argc, "-a");
+  if (nullptr != cli_option) {
+    node_name_prefix = cli_option;
+  }
+
+  uint32_t ignore_node_index = 0;
+  cli_option = rcutils_cli_get_option(argv, argv + argc, "-c");
+  if (nullptr != cli_option) {
+    ignore_node_index = stoi(std::string(cli_option));
+  }
+
+  uint32_t ignore_topic_index = 0;
+  cli_option = rcutils_cli_get_option(argv, argv + argc, "-i");
+  if (nullptr != cli_option) {
+    ignore_topic_index = stoi(std::string(cli_option));
   }
 
   // Set target
-  target_number = node_num * sub_num;
+  target_number = node_count * subscriber_count_per_node;
 
   rclcpp::executors::SingleThreadedExecutor exe;
   std::vector<std::shared_ptr<NodeSub>> nodes;
-  for (uint32_t i = 0; i < node_num; i++) {
-    std::string node_name = "node_sub_" + std::to_string(i);
-    auto node = std::make_shared<NodeSub>(node_name, sub_num);
+  for (uint32_t i = 0; i < node_count; i++) {
+    auto node = std::make_shared<NodeSub>(
+      node_name_prefix, i, topic_name_prefix, subscriber_count_per_node,
+      topic_count_per_node, ignore_node_index, ignore_topic_index);
     nodes.emplace_back(node);
     exe.add_node(node);
   }
